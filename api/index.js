@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
@@ -45,7 +45,11 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      systemInstruction: SARAH_SYSTEM_INSTRUCTIONS
+    });
 
     // Combine user prompt with allergen selections and fridge ingredients
     let userPrompt = message || '';
@@ -56,22 +60,9 @@ app.post('/api/chat', async (req, res) => {
       userPrompt += `\nStrict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)`;
     }
 
-    // Call Gemma cloud model (e.g. gemma-2-9b-it / gemma-2-27b-it or gemini fallback)
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: `${SARAH_SYSTEM_INSTRUCTIONS}\n\nUser Request: ${userPrompt}` }]
-        }
-      ],
-      config: {
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      }
-    });
-
-    const reply = response.text || "I'm sorry, I couldn't generate a safe recipe response at this moment.";
+    const result = await model.generateContent(userPrompt);
+    const response = await result.response;
+    const reply = response.text() || "I'm sorry, I couldn't generate a safe recipe response at this moment.";
     res.json({ reply });
   } catch (error) {
     console.error('AllergenPal Backend Error:', error);
