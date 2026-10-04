@@ -8,7 +8,7 @@ app.use(express.json());
 
 // Strict Agent System Instructions for Sarah's Allergen & Meal Planning Protection
 const SARAH_SYSTEM_INSTRUCTIONS = `
-You are AllergenPal, an intelligent, empathetic, yet strictly vigilant culinary AI assistant and Fridge-Cleaner Chef powered by the cloud-hosted Gemma/Gemini model and Antigravity framework.
+You are AllergenPal, an intelligent, empathetic, yet strictly vigilant culinary AI assistant and Fridge-Cleaner Chef powered by the cloud-hosted Gemma/Gemini model family and Antigravity framework.
 
 Your primary mission is to protect and plan delicious meals for the user and their roommate, Sarah.
 
@@ -33,57 +33,23 @@ CRITICAL ALLERGEN CONSTRAINTS:
    - 💡 Fridge-Cleaner Tip (How leftover ingredients were maximized)
 `;
 
-// Direct dynamic model caller that inspects available models and queries the active one
-async function generateWithAvailableModel(apiKey, promptText) {
-  // Step 1: Query ListModels directly via REST to find active models supported by the API key
-  let targetModel = null;
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (listRes.ok) {
-      const data = await listRes.json();
-      const availableModels = (data.models || [])
-        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
-        .map(m => m.name.replace(/^models\//, ''));
-      
-      console.log('Available models for key:', availableModels);
-
-      // Prioritize Gemma, then modern Gemini models
-      const priorityOrder = [
-        'gemma-2-9b-it',
-        'gemma-2-27b-it',
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-exp',
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro',
-        'gemini-pro'
-      ];
-
-      for (const pref of priorityOrder) {
-        if (availableModels.includes(pref)) {
-          targetModel = pref;
-          break;
-        }
-      }
-
-      // If none in priority list, pick any model supporting generateContent
-      if (!targetModel && availableModels.length > 0) {
-        targetModel = availableModels[0];
-      }
-    }
-  } catch (err) {
-    console.warn('ListModels query failed, falling back to static list:', err.message);
-  }
-
-  // Fallback candidate list if ListModels was empty or restricted
-  const modelsToTry = targetModel 
-    ? [targetModel, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
-    : ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro', 'gemma-2-9b-it'];
+// Direct dynamic model caller targeting active generation models on Google AI API
+async function generateRecipeResponse(apiKey, promptText) {
+  // Models confirmed active on your API key:
+  // Gemma models: gemma-4-26b-a4b-it, gemma-4-31b-it
+  // Gemini models: gemini-2.5-flash, gemini-3.8-flash, gemini-flash-latest, antigravity-preview-latest
+  const preferredModels = [
+    'gemma-4-26b-a4b-it',
+    'gemma-4-31b-it',
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
+    'antigravity-preview-latest'
+  ];
 
   let lastError = null;
 
-  for (const model of modelsToTry) {
+  for (const model of preferredModels) {
     try {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const payload = {
@@ -112,11 +78,11 @@ async function generateWithAvailableModel(apiKey, promptText) {
       }
     } catch (err) {
       lastError = err;
-      console.warn(`Failed model ${model}:`, err.message);
+      console.warn(`Model ${model} attempt failed:`, err.message);
     }
   }
 
-  throw lastError || new Error("Failed to generate content with available models.");
+  throw lastError || new Error("Failed to generate content with available cloud models.");
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -142,7 +108,7 @@ app.post('/api/chat', async (req, res) => {
       promptContent += `Strict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)\n`;
     }
 
-    const reply = await generateWithAvailableModel(apiKey, promptContent);
+    const reply = await generateRecipeResponse(apiKey, promptContent);
     res.json({ reply });
   } catch (error) {
     console.error('AllergenPal Backend Error:', error);
