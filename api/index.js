@@ -46,21 +46,24 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: SARAH_SYSTEM_INSTRUCTIONS
-    });
+    const model = genAI.getGenerativeModel(
+      { model: 'gemma-2-9b-it' },
+      { apiVersion: 'v1beta' }
+    );
 
-    // Combine user prompt with allergen selections and fridge ingredients
-    let userPrompt = message || '';
+    // Combine user prompt with allergen selections, fridge ingredients, and system instructions
+    let promptContent = `${SARAH_SYSTEM_INSTRUCTIONS}\n\n`;
+    if (message) {
+      promptContent += `User Request: ${message}\n`;
+    }
     if (ingredients && ingredients.trim()) {
-      userPrompt += `\n\nAvailable Fridge/Pantry Ingredients: ${ingredients.trim()}`;
+      promptContent += `Available Fridge/Pantry Ingredients: ${ingredients.trim()}\n`;
     }
     if (selectedAllergens && selectedAllergens.length > 0) {
-      userPrompt += `\nStrict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)`;
+      promptContent += `Strict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)\n`;
     }
 
-    const result = await model.generateContent(userPrompt);
+    const result = await model.generateContent(promptContent);
     const response = await result.response;
     const reply = response.text() || "I'm sorry, I couldn't generate a safe recipe response at this moment.";
     res.json({ reply });
