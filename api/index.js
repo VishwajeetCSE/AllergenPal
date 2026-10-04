@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
@@ -9,7 +8,7 @@ app.use(express.json());
 
 // Strict Agent System Instructions for Sarah's Allergen & Meal Planning Protection
 const SARAH_SYSTEM_INSTRUCTIONS = `
-You are AllergenPal, an intelligent, empathetic, yet strictly vigilant culinary AI assistant and Fridge-Cleaner Chef powered by the cloud-hosted Gemma model and Antigravity framework.
+You are AllergenPal, an intelligent, empathetic, yet strictly vigilant culinary AI assistant and Fridge-Cleaner Chef powered by the cloud-hosted Gemma/Gemini model and Antigravity framework.
 
 Your primary mission is to protect and plan delicious meals for the user and their roommate, Sarah.
 
@@ -34,9 +33,95 @@ CRITICAL ALLERGEN CONSTRAINTS:
    - 💡 Fridge-Cleaner Tip (How leftover ingredients were maximized)
 `;
 
+// Direct dynamic model caller that inspects available models and queries the active one
+async function generateWithAvailableModel(apiKey, promptText) {
+  // Step 1: Query ListModels directly via REST to find active models supported by the API key
+  let targetModel = null;
+  try {
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (listRes.ok) {
+      const data = await listRes.json();
+      const availableModels = (data.models || [])
+        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+        .map(m => m.name.replace(/^models\//, ''));
+      
+      console.log('Available models for key:', availableModels);
+
+      // Prioritize Gemma, then modern Gemini models
+      const priorityOrder = [
+        'gemma-2-9b-it',
+        'gemma-2-27b-it',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro',
+        'gemini-pro'
+      ];
+
+      for (const pref of priorityOrder) {
+        if (availableModels.includes(pref)) {
+          targetModel = pref;
+          break;
+        }
+      }
+
+      // If none in priority list, pick any model supporting generateContent
+      if (!targetModel && availableModels.length > 0) {
+        targetModel = availableModels[0];
+      }
+    }
+  } catch (err) {
+    console.warn('ListModels query failed, falling back to static list:', err.message);
+  }
+
+  // Fallback candidate list if ListModels was empty or restricted
+  const modelsToTry = targetModel 
+    ? [targetModel, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
+    : ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro', 'gemma-2-9b-it'];
+
+  let lastError = null;
+
+  for (const model of modelsToTry) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const payload = {
+        contents: [
+          {
+            parts: [{ text: promptText }]
+          }
+        ]
+      };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const generatedText = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (generatedText) {
+        return generatedText;
+      }
+    } catch (err) {
+      lastError = err;
+      console.warn(`Failed model ${model}:`, err.message);
+    }
+  }
+
+  throw lastError || new Error("Failed to generate content with available models.");
+}
+
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, ingredients, selectedAllergens, history = [] } = req.body;
+    const { message, ingredients, selectedAllergens } = req.body;
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -44,8 +129,6 @@ app.post('/api/chat', async (req, res) => {
         error: 'GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env or Vercel Environment Variables.'
       });
     }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
 
     // Combine user prompt with allergen selections, fridge ingredients, and system instructions
     let promptContent = `${SARAH_SYSTEM_INSTRUCTIONS}\n\n`;
@@ -59,42 +142,27 @@ app.post('/api/chat', async (req, res) => {
       promptContent += `Strict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)\n`;
     }
 
-    // Candidate model IDs available on Google AI Studio
-    const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-pro-latest',
-      'gemini-pro',
-      'gemma-2-9b-it',
-      'gemma-2-27b-it'
-    ];
-
-    let reply = '';
-    let lastError = null;
-
-    for (const modelName of candidateModels) {
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(promptContent);
-        const response = await result.response;
-        reply = response.text();
-        if (reply) break;
-      } catch (err) {
-        lastError = err;
-        console.warn(`Model ${modelName} failed, attempting next candidate... Error:`, err.message);
-      }
-    }
-
-    if (!reply) {
-      throw lastError || new Error("Unable to generate content with available models.");
-    }
-
+    const reply = await generateWithAvailableModel(apiKey, promptContent);
     res.json({ reply });
   } catch (error) {
     console.error('AllergenPal Backend Error:', error);
     res.status(500).json({ 
       error: error.message || 'An error occurred while communicating with the cloud model.' 
     });
+  }
+});
+
+// Diagnostic endpoint to check available models for current API key
+app.get('/api/models', async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(400).json({ error: 'No GEMINI_API_KEY configured' });
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
