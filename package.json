@@ -1,0 +1,25 @@
+{
+  "name": "allergen-pal",
+  "version": "1.0.0",
+  "description": "AllergenPal - Intelligent allergen-safe meal planner and fridge cleaner powered by cloud Gemma model via Antigravity framework",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "allergen",
+    "gemma",
+    "meal-planner",
+    "antigravity",
+    "hacktoberfest"
+  ],
+  "author": "VishwajeetCSE",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^0.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
