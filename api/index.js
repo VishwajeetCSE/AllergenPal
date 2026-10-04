@@ -46,10 +46,6 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel(
-      { model: 'gemma-2-9b-it' },
-      { apiVersion: 'v1beta' }
-    );
 
     // Combine user prompt with allergen selections, fridge ingredients, and system instructions
     let promptContent = `${SARAH_SYSTEM_INSTRUCTIONS}\n\n`;
@@ -63,9 +59,36 @@ app.post('/api/chat', async (req, res) => {
       promptContent += `Strict Allergen Restrictions: ${selectedAllergens.join(', ')} (Sarah: Strictly No Peanuts, No Dairy, No Gluten)\n`;
     }
 
-    const result = await model.generateContent(promptContent);
-    const response = await result.response;
-    const reply = response.text() || "I'm sorry, I couldn't generate a safe recipe response at this moment.";
+    // Candidate model IDs available on Google AI Studio
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-1.5-pro-latest',
+      'gemini-pro',
+      'gemma-2-9b-it',
+      'gemma-2-27b-it'
+    ];
+
+    let reply = '';
+    let lastError = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(promptContent);
+        const response = await result.response;
+        reply = response.text();
+        if (reply) break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Model ${modelName} failed, attempting next candidate... Error:`, err.message);
+      }
+    }
+
+    if (!reply) {
+      throw lastError || new Error("Unable to generate content with available models.");
+    }
+
     res.json({ reply });
   } catch (error) {
     console.error('AllergenPal Backend Error:', error);
